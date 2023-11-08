@@ -5,10 +5,10 @@ import { ISchema, SchemaFile } from './schema';
 import { MergeType, addSourceApiAutoMergePermission, addSourceGraphQLPermission } from './source-api-association';
 import { ICertificate } from '../../aws-certificatemanager';
 import { IUserPool } from '../../aws-cognito';
-import { ManagedPolicy, Role, IRole, ServicePrincipal, Grant, IGrantable } from '../../aws-iam';
+import { ManagedPolicy, Role, IRole, ServicePrincipal } from '../../aws-iam';
 import { IFunction } from '../../aws-lambda';
 import { ILogGroup, LogGroup, LogRetention, RetentionDays } from '../../aws-logs';
-import { ArnFormat, CfnResource, Duration, Expiration, FeatureFlags, IResolvable, Stack } from '../../core';
+import { CfnResource, Duration, Expiration, FeatureFlags, IResolvable, Stack } from '../../core';
 import * as cxapi from '../../cx-api';
 
 /**
@@ -336,7 +336,7 @@ export abstract class Definition {
   /**
    * Schema from schema object.
    * @param schema SchemaFile.fromAsset(filePath: string) allows schema definition through schema.graphql file
-   * @returns API Source with schema from file
+   * @returns Definition with schema from file
    */
   public static fromSchema(schema: ISchema): Definition {
     return {
@@ -347,7 +347,7 @@ export abstract class Definition {
   /**
    * Schema from file, allows schema definition through schema.graphql file
    * @param filePath the file path of the schema file
-   * @returns API Source with schema from file
+   * @returns Definition with schema from file
    */
   public static fromFile(filePath: string): Definition {
     return this.fromSchema(SchemaFile.fromAsset(filePath));
@@ -356,7 +356,7 @@ export abstract class Definition {
   /**
    * Schema from existing AppSync APIs - used for creating a AppSync Merged API
    * @param sourceApiOptions Configuration for AppSync Merged API
-   * @returns API Source with for AppSync Merged API
+   * @returns Definition with for AppSync Merged API
    */
   public static fromSourceApis(sourceApiOptions: SourceApiOptions): Definition {
     return {
@@ -409,7 +409,7 @@ export interface GraphqlApiProps {
    * SchemaFile.fromAsset(filePath: string) allows schema definition through schema.graphql file
    *
    * @default - schema will be generated code-first (i.e. addType, addObjectType, etc.)
-   * @deprecated use apiSource.schema instead
+   * @deprecated use Definition.schema instead
    */
   readonly schema?: ISchema;
   /**
@@ -435,65 +435,6 @@ export interface GraphqlApiProps {
    * @default - no domain name
    */
   readonly domainName?: DomainOptions;
-}
-
-/**
- * A class used to generate resource arns for AppSync
- */
-export class IamResource {
-  /**
-   * Generate the resource names given custom arns
-   *
-   * @param arns The custom arns that need to be permissioned
-   *
-   * Example: custom('/types/Query/fields/getExample')
-   */
-  public static custom(...arns: string[]): IamResource {
-    if (arns.length === 0) {
-      throw new Error('At least 1 custom ARN must be provided.');
-    }
-    return new IamResource(arns);
-  }
-
-  /**
-   * Generate the resource names given a type and fields
-   *
-   * @param type The type that needs to be allowed
-   * @param fields The fields that need to be allowed, if empty grant permissions to ALL fields
-   *
-   * Example: ofType('Query', 'GetExample')
-   */
-  public static ofType(type: string, ...fields: string[]): IamResource {
-    const arns = fields.length ? fields.map((field) => `types/${type}/fields/${field}`) : [`types/${type}/*`];
-    return new IamResource(arns);
-  }
-
-  /**
-   * Generate the resource names that accepts all types: `*`
-   */
-  public static all(): IamResource {
-    return new IamResource(['*']);
-  }
-
-  private arns: string[];
-
-  private constructor(arns: string[]) {
-    this.arns = arns;
-  }
-
-  /**
-   * Return the Resource ARN
-   *
-   * @param api The GraphQL API to give permissions
-   */
-  public resourceArns(api: GraphqlApi): string[] {
-    return this.arns.map((arn) => Stack.of(api).formatArn({
-      service: 'appsync',
-      resource: `apis/${api.apiId}`,
-      arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
-      resourceName: `${arn}`,
-    }));
-  }
 }
 
 /**
@@ -735,56 +676,6 @@ export class GraphqlApi extends GraphqlApiBase {
         assumedBy: new ServicePrincipal('appsync.amazonaws.com'),
       });
     }
-  }
-
-  /**
-   * Adds an IAM policy statement associated with this GraphQLApi to an IAM
-   * principal's policy.
-   *
-   * @param grantee The principal
-   * @param resources The set of resources to allow (i.e. ...:[region]:[accountId]:apis/GraphQLId/...)
-   * @param actions The actions that should be granted to the principal (i.e. appsync:graphql )
-   */
-  public grant(grantee: IGrantable, resources: IamResource, ...actions: string[]): Grant {
-    return Grant.addToPrincipal({
-      grantee,
-      actions,
-      resourceArns: resources.resourceArns(this),
-      scope: this,
-    });
-  }
-
-  /**
-   * Adds an IAM policy statement for Mutation access to this GraphQLApi to an IAM
-   * principal's policy.
-   *
-   * @param grantee The principal
-   * @param fields The fields to grant access to that are Mutations (leave blank for all)
-   */
-  public grantMutation(grantee: IGrantable, ...fields: string[]): Grant {
-    return this.grant(grantee, IamResource.ofType('Mutation', ...fields), 'appsync:GraphQL');
-  }
-
-  /**
-   * Adds an IAM policy statement for Query access to this GraphQLApi to an IAM
-   * principal's policy.
-   *
-   * @param grantee The principal
-   * @param fields The fields to grant access to that are Queries (leave blank for all)
-   */
-  public grantQuery(grantee: IGrantable, ...fields: string[]): Grant {
-    return this.grant(grantee, IamResource.ofType('Query', ...fields), 'appsync:GraphQL');
-  }
-
-  /**
-   * Adds an IAM policy statement for Subscription access to this GraphQLApi to an IAM
-   * principal's policy.
-   *
-   * @param grantee The principal
-   * @param fields The fields to grant access to that are Subscriptions (leave blank for all)
-   */
-  public grantSubscription(grantee: IGrantable, ...fields: string[]): Grant {
-    return this.grant(grantee, IamResource.ofType('Subscription', ...fields), 'appsync:GraphQL');
   }
 
   private validateAuthorizationProps(modes: AuthorizationMode[]) {
